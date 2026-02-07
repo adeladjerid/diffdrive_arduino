@@ -57,10 +57,14 @@ hardware_interface::CallbackReturn DiffDriveArduinoHardware::on_configure(
                  "Failed to get terminal attributes");
     return hardware_interface::CallbackReturn::ERROR;
   }
-
-  cfsetospeed(&tty, baudrate_);
-  cfsetispeed(&tty, baudrate_);
-
+    speed_t speed;
+  switch(baudrate_) {
+  case 115200: speed = B115200; break;
+  case 57600:  speed = B57600; break;
+  // ... other cases
+  }
+  cfsetospeed(&tty, speed);  // Uses B115200 constant
+  cfsetispeed(&tty, speed);  // Uses B115200 constant
   tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
   tty.c_iflag &= ~IGNBRK;
   tty.c_lflag = 0;
