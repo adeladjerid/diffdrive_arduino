@@ -7,6 +7,8 @@
 #include <cstring>
 #include <vector>
 #include <sstream>
+#include <string>
+#include <cerrno>
 
 namespace diffdrive_arduino
 {
@@ -125,32 +127,79 @@ hardware_interface::return_type DiffDriveArduinoHardware::write(
 
 bool DiffDriveArduinoHardware::read_encoder_feedback()
 {
-  char buffer[64];
-  int n = ::read(serial_port_, buffer, sizeof(buffer) - 1);
-  if (n > 0)
+  // The Arduino sends newline-delimited frames:
+  //   pos_left,pos_right,vel_left,vel_right\n
+  // In Docker/virtual scheduling, ::read() may return partial frames or multiple
+  // frames at once. Buffer until we have a full line.
+
+  char buffer[128];
+  int n = ::read(serial_port_, buffer, sizeof(buffer));
+  if (n <= 0)
   {
-    buffer[n] = '\0';
+    return false;
+  }
+
+  serial_rx_buffer_.append(buffer, buffer + n);
+
+  bool parsed_any = false;
+
+  while (true)
+  {
+    auto newline_pos = serial_rx_buffer_.find('\n');
+    if (newline_pos == std::string::npos)
+    {
+      break;  // wait for more bytes
+    }
+
+    // Extract one full line without the newline.
+    std::string line = serial_rx_buffer_.substr(0, newline_pos);
+    serial_rx_buffer_.erase(0, newline_pos + 1);
+
+    // Trim possible carriage return (Arduino sometimes prints \r\n)
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+
+    if (line.empty())
+    {
+      continue;
+    }
+
     double pl, pr, vl, vr;
-    if (sscanf(buffer, "%lf,%lf,%lf,%lf", &pl, &pr, &vl, &vr) == 4)
+    if (sscanf(line.c_str(), "%lf,%lf,%lf,%lf", &pl, &pr, &vl, &vr) == 4)
     {
       left_wheel_pos_ = pl;
       right_wheel_pos_ = pr;
       left_wheel_vel_ = vl;
       right_wheel_vel_ = vr;
-      return true;
+      parsed_any = true;
     }
   }
-  return false;
+
+  return parsed_any;
 }
+
 
 void DiffDriveArduinoHardware::send_velocity_command(double left_vel, double right_vel)
 {
   char cmd[32];
-  snprintf(cmd, sizeof(cmd), "%.3f,%.3f\n", left_vel, right_vel);
-  ::write(serial_port_, cmd, strlen(cmd));
+  const int n = snprintf(cmd, sizeof(cmd), "%.3f,%.3f\n", left_vel, right_vel);
+  if (n <= 0)
+  {
+    return;
+  }
+
+  const ssize_t written = ::write(serial_port_, cmd, static_cast<size_t>(n));
+  if (written < 0)
+  {
+    RCLCPP_ERROR(rclcpp::get_logger("DiffDriveArduinoHardware"),
+                 "Failed to write to serial port: %s", strerror(errno));
+  }
 }
 
 }  // namespace diffdrive_arduino
 
 #include "pluginlib/class_list_macros.hpp"
 PLUGINLIB_EXPORT_CLASS(diffdrive_arduino::DiffDriveArduinoHardware, hardware_interface::SystemInterface)
+

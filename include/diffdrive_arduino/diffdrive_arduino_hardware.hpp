@@ -45,8 +45,13 @@ private:
   double right_wheel_vel_;
   double left_wheel_cmd_;
   double right_wheel_cmd_;
+
+  // Serial line buffer for robust newline-delimited parsing.
+  std::string serial_rx_buffer_;
 };
+
 
 }  // namespace diffdrive_arduino
 
 #endif  // DIFFDRIVE_ARDUINO_HARDWARE_HPP_
+
